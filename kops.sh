@@ -4,45 +4,122 @@ Attach a IAM ROLE TE=EC2, Permisions = admin
 
 vi .bashrc
 
-export PATH=$PATH:/usr/local/bin/
-:wq!
+#!/bin/bash
 
-source .bashrc
+set -e
 
-ssh-keygen
+# -------------------------------
+# Variables
+# -------------------------------
+BUCKET_NAME="laxmi.bkt"
+CLUSTER_NAME="atchuthhh.k8s.local"
+REGION="ap-south-1"
+ZONES="ap-south-1a,ap-south-1b"
 
-cp /root/.ssh/id_rsa.pub my-keypair.pub
+CONTROL_PLANE_SIZE="m7i-flex.large"
+NODE_SIZE="m7i-flex.large"
 
-chmod 777 my-keypair.pub
+CONTROL_PLANE_COUNT=1
+NODE_COUNT=2
 
-vi kops.sh
+CONTROL_PLANE_VOLUME=40
+NODE_VOLUME=40
 
+AMI_ID="ami-0f918f7e67a3323f0"
+
+# -------------------------------
+# Update PATH
+# -------------------------------
+echo 'export PATH=$PATH:/usr/local/bin' >> ~/.bashrc
+source ~/.bashrc
+
+# -------------------------------
+# Generate SSH Key if not exists
+# -------------------------------
+if [ ! -f ~/.ssh/id_rsa ]; then
+    ssh-keygen -t rsa -b 4096 -N "" -f ~/.ssh/id_rsa
+fi
+
+cp ~/.ssh/id_rsa.pub my-keypair.pub
+
+# Safer permission than 777
+chmod 644 my-keypair.pub
+
+# -------------------------------
+# Install kubectl
+# -------------------------------
 curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+
+chmod +x kubectl
+sudo mv kubectl /usr/local/bin/
+
+# -------------------------------
+# Install kops
+# -------------------------------
 wget https://github.com/kubernetes/kops/releases/download/v1.32.0/kops-linux-amd64
-chmod +x kops-linux-amd64 kubectl
-mv kubectl /usr/local/bin/kubectl
-mv kops-linux-amd64 /usr/local/bin/kops
-aws s3api create-bucket --bucket reyaz-kops-testbkt143333.k8s.local --region ap-south-1 --create-bucket-configuration LocationConstraint=ap-south-1
-aws s3api put-bucket-versioning --bucket reyaz-kops-testbkt143333.k8s.local --region ap-south-1 --versioning-configuration Status=Enabled
-export KOPS_STATE_STORE=s3://reyaz-kops-testbkt143333.k8s.local
-kops create cluster --name=reyaz.k8s.local --zones=ap-south-1a,ap-south-1b --control-plane-count=1 --control-plane-size=t3.medium --node-count=2 --node-size=t3.small --node-volume-size=20 --control-plane-volume-size=20 --ssh-public-key=my-keypair.pub --image=ami-02d26659fd82cf299 --networking=calico --topology=public
-kops update cluster --name reyaz.k8s.local --yes --admin
 
+chmod +x kops-linux-amd64
+sudo mv kops-linux-amd64 /usr/local/bin/kops
 
-wq!
+# -------------------------------
+# Create S3 Bucket
+# -------------------------------
+aws s3api create-bucket \
+  --bucket ${BUCKET_NAME} \
+  --region ${REGION} \
+  --create-bucket-configuration LocationConstraint=${REGION} || true
 
-sh kops.sh
+# -------------------------------
+# Enable Versioning
+# -------------------------------
+aws s3api put-bucket-versioning \
+  --bucket ${BUCKET_NAME} \
+  --region ${REGION} \
+  --versioning-configuration Status=Enabled
 
-export KOPS_STATE_STORE=s3://reyaz-kops-testbkt143333.k8s.local
+# -------------------------------
+# Export KOPS State Store
+# -------------------------------
+export KOPS_STATE_STORE=s3://${BUCKET_NAME}
 
-kops validate cluster --wait 10m
+echo "export KOPS_STATE_STORE=s3://${BUCKET_NAME}" >> ~/.bashrc
 
+# -------------------------------
+# Create Cluster
+# -------------------------------
+kops create cluster \
+  --name=${CLUSTER_NAME} \
+  --zones=${ZONES} \
+  --control-plane-count=${CONTROL_PLANE_COUNT} \
+  --control-plane-size=${CONTROL_PLANE_SIZE} \
+  --node-count=${NODE_COUNT} \
+  --node-size=${NODE_SIZE} \
+  --node-volume-size=${NODE_VOLUME} \
+  --control-plane-volume-size=${CONTROL_PLANE_VOLUME} \
+  --ssh-public-key=my-keypair.pub \
+  --image=${AMI_ID} \
+  --networking=calico \
+  --topology=public
 
--- kops get cluster
+# -------------------------------
+# Deploy Cluster
+# -------------------------------
+kops update cluster \
+  --name=${CLUSTER_NAME} \
+  --yes \
+  --admin
 
--- kubectl get nodes/no
+# -------------------------------
+# Wait for Cluster
+# -------------------------------
+echo "Waiting for cluster validation..."
 
--- kubectl get nodes -o wide
+kops validate cluster --wait 15m
+
+echo ""
+echo "========================================"
+echo "Cluster Created Successfully"
+echo "========================================"
 
 Suggestions:
  * list clusters with: kops get cluster
